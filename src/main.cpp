@@ -1,5 +1,6 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoHA.h>
+#include <RBDdimmer.h>  // Include RBDDimmer library
 
 // Include WiFi credentials
 #ifdef __has_include
@@ -13,8 +14,12 @@ const int mqttPort = 1883;               // Default MQTT port
 #  endif
 #endif
 
-// Define the GPIO pin connected to the SSR
-const int ssrPin = D1;
+// Define the GPIO pins for the TRIAC module
+const int dimmerPin = D1;  // GPIO pin connected to the TRIAC module
+const int zerocrossPin = D2; // GPIO pin connected to the zero-cross detection
+
+// Initialize the RBDDimmer object
+dimmerLamp dimmer(dimmerPin, zerocrossPin);  // Create dimmer object
 
 // WiFi and MQTT client objects
 WiFiClient wifiClient;
@@ -27,24 +32,25 @@ HANumber number("heaterPower", HANumber::PrecisionP0); // Full numbers, no decim
 // Heating control variables
 int powerLevel = 0; // Use integer values for power level
 
-// PWM Frequency and Resolution
-const int pwmFrequency = 500;  // PWM frequency in Hz
-const int pwmResolution = 1023; // Resolution (10-bit PWM)
-
 // Function to update heating rod based on the power level
 void updateHeatingRod() {
     if (powerLevel <= 0) {
-        // Turn off SSR
-        analogWrite(ssrPin, 0);
+        // Turn off TRIAC
+        dimmer.setPower(0);
+        dimmer.setState(OFF);
     } else if (powerLevel >= 100) {
-        // Turn on SSR (no PWM)
-        analogWrite(ssrPin, pwmResolution);
+        // Turn on TRIAC at full power (100%)
+        dimmer.setPower(100);
+        dimmer.setState(ON);
     } else {
-        // Set PWM value based on power level
-        int pwmValue = (int)(pwmResolution * (powerLevel / 100.0));
-        analogWrite(ssrPin, pwmValue);
+        // Set TRIAC power level based on powerLevel
+        dimmer.setPower(powerLevel);
+        dimmer.setState(ON);
     }
+    Serial.print("Power Level: ");
+    Serial.println(powerLevel); 
 }
+
 // Callback function for handling number input from Home Assistant
 void onNumberCommand(HANumeric receivedNumber, HANumber* sender) {
     if (!receivedNumber.isSet()) {
@@ -61,12 +67,10 @@ void onNumberCommand(HANumeric receivedNumber, HANumber* sender) {
     sender->setState(receivedNumber);
 }
 
-
 void setup() {
-    // Set up the SSR pin
-    pinMode(ssrPin, OUTPUT);
-    analogWriteFreq(pwmFrequency);
-
+    // Set up the TRIAC module
+    dimmer.begin(NORMAL_MODE, ON);  // Initialize dimmer in normal mode, with the TRIAC on
+    
     // Start serial communication for debugging
     Serial.begin(115200);
     delay(10);
@@ -74,7 +78,7 @@ void setup() {
     // Connect to WiFi
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
+        delay(10);
         Serial.print(".");
     }
     Serial.println("Connected to WiFi");
